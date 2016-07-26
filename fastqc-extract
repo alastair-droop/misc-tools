@@ -104,39 +104,41 @@ detected_extra_modules = sorted(list(detected_modules ^ set(default_modules)))
 # Sort the module order:
 modules_present = []
 for module in default_modules:
-	if module in detected_base_modules: modules_present.append(module)
+    if module in detected_base_modules: modules_present.append(module)
 modules_present.extend(detected_extra_modules)
 
 # Sort out the requested module:
 try:
-	#Attempt to match default module by number:
-	selected_module = default_modules[int(args.module) - 1]
+    #Attempt to match default module by number:
+    selected_module = default_modules[int(args.module) - 1]
 except:
-	#Attempt to match all modules by name:
-	if (args.module in modules_present) == False: error('module "{}" not present'.format(args.module))
-	selected_module = args.module
+    #Attempt to match all modules by name:
+    if (args.module in modules_present) == False: error('module "{}" not present'.format(args.module))
+    selected_module = args.module
 
 # Extract a list of the fileIDs:
 fileIDs = sorted(file_data.keys())
 
 # Print out a summary, if requested:
 if args.summary == True:
-	printOutput('module', fileIDs)
-	for module in modules_present:
-		output = []
-		for fileID in fileIDs:
-			try:
-				output.append(file_data[fileID][module]['status'])
-			except:
-				output.append('-')
-		printOutput(module, output)
-	exit(0)
+    printOutput('module', fileIDs)
+    for module in modules_present:
+        output = []
+        for fileID in fileIDs:
+            try:
+                output.append(file_data[fileID][module]['status'])
+            except:
+                output.append('-')
+        printOutput(module, output)
+    exit(0)
 
 # Check the header, and print it out:
 header = set()
 for f in fileIDs:
-    try: header |= set([file_data[f][selected_module]['header']])
-    except: raise
+    module_header = file_data[f][selected_module]['header']
+    if module_header != None:
+        try: header |= set([module_header])
+        except: raise
 if len(header) > 1: exit('header mismatch for module "{}"'.format(selected_module))
 if args.header == True:
     printOutput('fileID', list(header)[0].split('\t'))
