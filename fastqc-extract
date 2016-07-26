@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import argparse
+import zipfile
+from sys import exit
+import os.path
+import re
+version = '1.0 (2016-07-18)'
+
+def error(message): exit('ERROR: {}'.format(message))
+
+default_modules = ("Basic Statistics", "Per base sequence quality", "Per tile sequence quality", "Per sequence quality scores", "Per base sequence content", "Per sequence GC content", "Per base N content", "Sequence Length Distribution", "Sequence Duplication Levels", "Overrepresented sequences", "Adapter Content", "Kmer Content")
+
+epilog = """The modules are:
+number name
+     1 Basic Statistics
+     2 Per base sequence quality
+     3 Per tile sequence quality
+     4 Per sequence quality scores
+     5 Per base sequence content
+     6 Per sequence GC content
+     7 Per base N content
+     8 Sequence Length Distribution
+     9 Sequence Duplication Levels
+    10 Overrepresented sequences
+    11 Adapter Content
+    12 Kmer Content
+"""
+
+parser = argparse.ArgumentParser(description='Extract image data from FastQC zip files', epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument('-v', '--version', action='version', version='%(prog)s {0}'.format(version))
+parser.add_argument('-c', '--csv', dest='csv', action='store_true', default=False, help='return CSV-formatted data')
+parser.add_argument('-e', '--header', dest='header', action='store_true', default=False, help='include header in output')
+parser.add_argument('-s', '--summary', dest='summary', action='store_true', default=False, help='generate module summary')
+parser.add_argument(dest='module', metavar='<module>', help='The module')
+parser.add_argument(dest='filenames', metavar='<filename>', nargs='+', help='FastQC ZIP file(s) to process')
+args = parser.parse_args()
+
+# Turn on headers when user asks for CSV:
+if args.csv == True: args.header = True
+
+# Function to return module data from a file:
+module_delimiter_re = re.compile('>>([^\t]+)(?:\t([^\t]+))?$')
+def extractModuleData(data):
+    modules = {}
+    current_module = None
+    for line in data:
+        line = line.strip()
+        if line.startswith('##'): continue
+        if line.startswith('#'):
+            modules[current_module]['header'] = line.lstrip('#')
+            continue
+        if line.startswith('>>'):
+            match = module_delimiter_re.match(line)
+            module_name = match.group(1)
+            if module_name == 'END_MODULE':
+                if current_module == None: error('malformed data file (extra END_MODULE)')
+                continue
+            current_module = module_name
+            modules[current_module] = {}
+            modules[current_module]['status'] = match.group(2)
+            modules[current_module]['header'] = None
+            modules[current_module]['data'] = []
+            continue
+        modules[current_module]['data'].append(line.split('\t'))
+    return(modules)
+
+def printOutput(fileID, x):
+    #fileID is a string, x is a LIST!
+    if args.csv == True: print('"{}","{}"'.format(fileID, '","'.join(x)))
+    else: print('{}\t{}'.format(fileID, '\t'.join(x)))
+
+# Read in the module data for all the files:
+file_data = {}
+for zip_filename in args.filenames:
+    try:
+        zip_file = zipfile.ZipFile(zip_filename, mode='r')
+        zip_label = os.path.basename(zip_filename).replace('_fastqc.zip', '')
+        data_file = [i for i in zip_file.namelist() if 'fastqc_data.txt' in i]
+        file_data[zip_label] = extractModuleData(zip_file.open(data_file[0], 'r').read().decode('ascii').splitlines())
+        zip_file.close()
+    except:  error('failed to process file "{}".'.format(zip_filename))
+
+# Sort the detected modules:
+detected_modules = set()
+for f in file_data.keys():
+    try: detected_modules |= set(list(file_data[f].keys()))
+    except: raise
+# Split detected modules into default and extra:
+detected_base_modules = detected_modules & set(default_modules)
+detected_extra_modules = sorted(list(detected_modules ^ set(default_modules)))
+# Sort the module order:
+modules_present = []
+for module in default_modules:
+	if module in detected_base_modules: modules_present.append(module)
+modules_present.extend(detected_extra_modules)
+
+# Sort out the requested module:
+try:
+	#Attempt to match default module by number:
+	selected_module = default_modules[int(args.module) - 1]
+except:
+	#Attempt to match all modules by name:
+	if (args.module in modules_present) == False: error('module "{}" not present'.format(args.module))
+	selected_module = args.module
+
+# Extract a list of the fileIDs:
+fileIDs = sorted(file_data.keys())
+
+# Print out a summary, if requested:
+if args.summary == True:
+	printOutput('module', fileIDs)
+	for module in modules_present:
+		output = []
+		for fileID in fileIDs:
+			try:
+				output.append(file_data[fileID][module]['status'])
+			except:
+				output.append('-')
+		printOutput(module, output)
+	exit(0)
+
+# Check the header, and print it out:
+header = set()
+for f in fileIDs:
+    try: header |= set([file_data[f][selected_module]['header']])
+    except: raise
+if len(header) > 1: exit('header mismatch for module "{}"'.format(selected_module))
+if args.header == True:
+    printOutput('fileID', list(header)[0].split('\t'))
+
+# Print out the data:
+for f in fileIDs:
+    try:
+        module_data = file_data[f][selected_module]['data']
+        for i in module_data: printOutput(f, i)
+    except: pass
